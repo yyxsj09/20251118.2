@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>拼音填字遊戲 (Pinyin Crossword)</title>
+    <style>
+        body {
+            font-family: "Arial", "微軟正黑體", sans-serif;
+            background-color: #f4f6f7;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+
+        h1 { color: #2c3e50; margin-bottom: 5px; }
+        .sub-text { color: #7f8c8d; margin-bottom: 20px; font-size: 0.9rem;}
+
+        .game-wrapper {
+            display: flex;
+            gap: 30px;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            justify-content: center;
+            max-width: 1200px;
+        }
+
+        /* 網格樣式 */
+        #crossword-board {
+            display: grid;
+            background: #2c3e50;
+            padding: 5px;
+            border: 2px solid #2c3e50;
+            gap: 1px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+
+        .cell {
+            width: 35px;
+            height: 35px;
+            background-color: #2c3e50;
+            position: relative;
+        }
+
+        .cell.active {
+            background-color: white;
+        }
+
+        .cell input {
+            width: 100%;
+            height: 100%;
+            border: none;
+            text-align: center;
+            font-size: 1.2em; /* 拼音字母大寫 */
+            text-transform: uppercase;
+            font-weight: bold;
+            background: transparent;
+            outline: none;
+            padding: 0;
+            color: #333;
+        }
+        
+        .cell input:focus { background-color: #e8f6f3; }
+
+        /* 題號 */
+        .cell-number {
+            position: absolute;
+            top: 1px;
+            left: 2px;
+            font-size: 9px;
+            color: #e74c3c;
+            pointer-events: none;
+            font-weight: bold;
+            z-index: 2;
+        }
+
+        /* 提示區 */
+        .clues-container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            width: 300px;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .clue-section h3 {
+            margin-top: 0;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 8px;
+            color: #3498db;
+            font-size: 1.1em;
+        }
+
+        ul { padding-left: 20px; margin: 0; }
+        li { 
+            margin-bottom: 10px; 
+            color: #555; 
+            line-height: 1.4; 
+            font-size: 0.95em;
+        }
+        
+        /* 強調漢字 */
+        .hanzi-hint {
+            font-weight: bold;
+            color: #333;
+            font-size: 1.2em;
+            margin-right: 5px;
+        }
+
+        .correct { background-color: #d4efdf !important; color: #27ae60 !important; }
+        .wrong { background-color: #fadbd8 !important; color: #c0392b !important; }
+
+        .controls {
+            margin-top: 25px;
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 1em;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            color: white;
+            transition: transform 0.1s;
+        }
+        button:active { transform: scale(0.95); }
+        
+        .btn-check { background-color: #27ae60; }
+        .btn-reveal { background-color: #e67e22; }
+        .btn-retry { background-color: #3498db; }
+
+        @media (max-width: 768px) {
+            .cell { width: 28px; height: 28px; }
+            .cell input { font-size: 0.9em; }
+            .game-wrapper { flex-direction: column-reverse; align-items: center; }
+            .clues-container { width: 90%; }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>拼音填字遊戲</h1>
+    <div class="sub-text">請根據提示輸入拼音 (不含聲調)</div>
+
+    <div class="game-wrapper">
+        <div class="clues-container">
+            <div class="clue-section">
+                <h3>➡ 橫向 (Across)</h3>
+                <ul id="across-list"></ul>
+            </div>
+            <div class="clue-section">
+                <h3>⬇ 直向 (Down)</h3>
+                <ul id="down-list"></ul>
+            </div>
+        </div>
+
+        <div id="crossword-board"></div>
+    </div>
+
+    <div class="controls">
+        <button class="btn-check" onclick="checkAnswers()">檢查答案</button>
+        <button class="btn-reveal" onclick="revealAnswers()">顯示解答</button>
+        <button class="btn-retry" onclick="initGame()">重新生成</button>
+    </div>
+
+    <script src="words02.js"></script>
+
+    <script>
+        const BOARD_SIZE = 20; // 拼音比較長，網格加大到 20x20
+        let grid = [];
+        let activeWords = [];
+        
+        const boardEl = document.getElementById('crossword-board');
+        const acrossListEl = document.getElementById('across-list');
+        const downListEl = document.getElementById('down-list');
+
+        if (typeof wordData === 'undefined') {
+            alert("找不到 words02.js，請確認檔案存在。");
+        }
+
+        function initGame() {
+            // 清空與重置
+            grid = Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(null));
+            activeWords = [];
+            boardEl.innerHTML = '';
+            acrossListEl.innerHTML = '';
+            downListEl.innerHTML = '';
+
+            // 檢查資料是否有 pinyin 欄位
+            const validData = wordData.filter(w => w.pinyin);
+            if(validData.length === 0) {
+                alert("資料錯誤：請在 words02.js 中為每個單字加入 'pinyin' 欄位 (例如 pinyin: 'nihao')");
+                return;
+            }
+
+            generateLayout(validData);
+            drawBoard();
+            renderClues();
+        }
+
+        function generateLayout(data) {
+            // 1. 清理資料：轉大寫，去空格
+            let words = data.map(item => ({
+                ...item,
+                cleanPinyin: item.pinyin.replace(/[^a-zA-Z]/g, '').toUpperCase(),
+                isPlaced: false
+            }));
+
+            // 2. 排序：長字優先
+            words.sort((a, b) => b.cleanPinyin.length - a.cleanPinyin.length);
+
+            // 3. 放置第一個字
+            if (words.length > 0) {
+                let first = words[0];
+                let startRow = Math.floor(BOARD_SIZE / 2);
+                let startCol = Math.floor((BOARD_SIZE - first.cleanPinyin.length) / 2);
+                placeWord(first, startRow, startCol, 'across');
+                first.isPlaced = true;
+            }
+
+            // 4. 貪婪演算法放置其餘單字
+            for (let pass = 0; pass < 3; pass++) { // 多掃幾次增加成功率
+                for (let i = 0; i < words.length; i++) {
+                    let current = words[i];
+                    if (current.isPlaced) continue;
+
+                    let bestPos = findBestPosition(current.cleanPinyin);
+                    if (bestPos) {
+                        placeWord(current, bestPos.row, bestPos.col, bestPos.dir);
+                        current.isPlaced = true;
+                    }
+                }
+            }
+        }
+
+        function findBestPosition(text) {
+            // 遍歷網格上的每個格子
+            for (let r = 0; r < BOARD_SIZE; r++) {
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                    if (grid[r][c]) {
+                        // 網格上有字母，檢查新單字是否有這個字母
+                        let charOnGrid = grid[r][c].char;
+                        
+                        for (let i = 0; i < text.length; i++) {
+                            if (text[i] === charOnGrid) {
+                                // 找到共同字母，嘗試交叉放置
+                                // 這裡的邏輯是：單字長度 text.length，交叉點在單字的第 i 個位置
+                                // 所以起始位置要減去 i
+                                if (canPlace(text, r - i, c, 'down')) {
+                                    return { row: r - i, col: c, dir: 'down' };
+                                }
+                                if (canPlace(text, r, c - i, 'across')) {
+                                    return { row: r, col: c - i, dir: 'across' };
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        function canPlace(text, row, col, dir) {
+            if (row < 0 || col < 0) return false;
+            
+            // 邊界檢查
+            if (dir === 'across') {
+                if (col + text.length > BOARD_SIZE) return false;
+                if (col > 0 && grid[row][col-1]) return false; // 左邊不能有字
+                if (col + text.length < BOARD_SIZE && grid[row][col+text.length]) return false; // 右邊不能有字
+            } else {
+                if (row + text.length > BOARD_SIZE) return false;
+                if (row > 0 && grid[row-1][col]) return false; // 上面不能有字
+                if (row + text.length < BOARD_SIZE && grid[row+text.length][col]) return false; // 下面不能有字
+            }
+
+            for (let i = 0; i < text.length; i++) {
+                let r = row + (dir === 'down' ? i : 0);
+                let c = col + (dir === 'across' ? i : 0);
+
+                if (grid[r][c]) {
+                    // 如果格子已有字，必須完全相同 (交叉點)
+                    if (grid[r][c].char !== text[i]) return false;
+                } else {
+                    // 如果格子是空的，檢查"兩側"是否淨空 (避免平行相鄰)
+                    if (dir === 'across') {
+                        if ((r > 0 && grid[r-1][c]) || (r < BOARD_SIZE-1 && grid[r+1][c])) return false;
+                    } else {
+                        if ((c > 0 && grid[r][c-1]) || (c < BOARD_SIZE-1 && grid[r][c+1])) return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        function placeWord(wordObj, row, col, dir) {
+            activeWords.push({
+                original: wordObj,
+                row: row,
+                col: col,
+                dir: dir,
+                number: 0
+            });
+
+            for (let i = 0; i < wordObj.cleanPinyin.length; i++) {
+                let r = row + (dir === 'down' ? i : 0);
+                let c = col + (dir === 'across' ? i : 0);
+                grid[r][c] = { char: wordObj.cleanPinyin[i] };
+            }
+        }
+
+        function drawBoard() {
+            boardEl.style.gridTemplateColumns = `repeat(${BOARD_SIZE}, 1fr)`;
+
+            // 計算題號
+            activeWords.sort((a, b) => (a.row * BOARD_SIZE + a.col) - (b.row * BOARD_SIZE + b.col));
+            let numberCounter = 1;
+            let cellNumbers = {};
+
+            activeWords.forEach(w => {
+                let key = `${w.row},${w.col}`;
+                if (!cellNumbers[key]) {
+                    cellNumbers[key] = numberCounter++;
+                }
+                w.number = cellNumbers[key];
+            });
+
+            for (let r = 0; r < BOARD_SIZE; r++) {
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                    let cell = document.createElement('div');
+                    cell.className = 'cell';
+
+                    if (grid[r][c]) {
+                        cell.classList.add('active');
+                        
+                        // 題號
+                        let key = `${r},${c}`;
+                        if (cellNumbers[key]) {
+                            let numSpan = document.createElement('span');
+                            numSpan.className = 'cell-number';
+                            numSpan.textContent = cellNumbers[key];
+                            cell.appendChild(numSpan);
+                        }
+
+                        // 輸入框
+                        let input = document.createElement('input');
+                        input.maxLength = 1;
+                        input.dataset.answer = grid[r][c].char;
+                        
+                        // 簡單的自動跳下格功能 (僅橫向)
+                        input.onkeyup = function(e) {
+                            this.classList.remove('wrong', 'correct');
+                            if(this.value.length === 1 && e.key.match(/[a-z]/i)) {
+                                // 嘗試找下一個 input
+                                // 這裡只是簡單優化，真正的跳格邏輯很複雜
+                            }
+                        };
+
+                        cell.appendChild(input);
+                    }
+                    boardEl.appendChild(cell);
+                }
+            }
+        }
+
+        function renderClues() {
+            activeWords.forEach(w => {
+                let li = document.createElement('li');
+                // 提示格式： 1. [漢字] English Meaning
+                li.innerHTML = `<strong>${w.number}.</strong> <span class="hanzi-hint">${w.original.word}</span> ${w.original.meaning}`;
+                
+                if (w.dir === 'across') {
+                    acrossListEl.appendChild(li);
+                } else {
+                    downListEl.appendChild(li);
+                }
+            });
+        }
+
+        function checkAnswers() {
+            let inputs = document.querySelectorAll('.cell input');
+            let correctCount = 0;
+
+            inputs.forEach(input => {
+                if (input.value.toUpperCase() === input.dataset.answer) {
+                    input.classList.add('correct');
+                    input.classList.remove('wrong');
+                    correctCount++;
+                } else if (input.value) {
+                    input.classList.add('wrong');
+                    input.classList.remove('correct');
+                }
+            });
+
+            if (correctCount === inputs.length && inputs.length > 0) {
+                setTimeout(() => alert("太棒了！拼音全對！🎉"), 100);
+            }
+        }
+
+        function revealAnswers() {
+            if(!confirm("確定要偷看所有答案嗎？")) return;
+            let inputs = document.querySelectorAll('.cell input');
+            inputs.forEach(input => {
+                input.value = input.dataset.answer;
+                input.classList.add('correct');
+            });
+        }
+
+        initGame();
+    </script>
+</body>
+</html>
